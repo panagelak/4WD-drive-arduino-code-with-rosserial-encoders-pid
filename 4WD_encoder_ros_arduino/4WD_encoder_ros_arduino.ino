@@ -13,8 +13,8 @@ double Setpoint_fr, Input_fr, Output_fr;
 double Setpoint_bl, Input_bl, Output_bl;
 double Setpoint_br, Input_br, Output_br;
 
-double aggKp=550, aggKi=280, aggKd=2;
-double consKp=300, consKi=120, consKd=0.25;
+double aggKp=450, aggKi=250, aggKd=4;
+double consKp=280, consKi=120, consKd=1;
 
 PID myPID_fl(&Input_fl, &Output_fl, &Setpoint_fl, aggKp, aggKi, aggKd, DIRECT);
 PID myPID_fr(&Input_fr, &Output_fr, &Setpoint_fr, aggKp, aggKi, aggKd, DIRECT);
@@ -46,7 +46,7 @@ const uint8_t LB_PWM = 12;
 
 // speed = 0? help? pid not reset?
 bool wtf;
-
+int ticks_since_target = 0;
 
 
 // Initialize ROS paramaters
@@ -71,17 +71,15 @@ void onTwist(const geometry_msgs::Twist &msg)
   //nh.loginfo("Inside Callback");
   float x = msg.linear.x;
   float z = msg.angular.z;
-  float w = 0.31;
+  if(x > 0.3){x = 0.3;}
+  if(z > 0.25){z = 0.2;}
+  float w = 0.2;
   if(!(x==0 && z==0)){
   wtf=false;
-  float fright = x + (z * w / 2.0)/0.11;
-  float fleft = x - (z * w / 2.0)/0.11;
-  float bright = x + (z * w / 2.0)/0.11;
-  float bleft = x - (z * w / 2.0)/0.11;
-  Setpoint_fl = fleft;
-  Setpoint_fr = fright;
-  Setpoint_bl = bleft;
-  Setpoint_br = bright;
+  Setpoint_fr = x + (z * w / 2.0)/0.1;
+  Setpoint_fl = x - (z * w / 2.0)/0.1;
+  Setpoint_br = x + (z * w / 2.0)/0.1;
+  Setpoint_bl = x - (z * w / 2.0)/0.1;
   }
   else{
     wtf=true;
@@ -89,7 +87,9 @@ void onTwist(const geometry_msgs::Twist &msg)
     Setpoint_fr = 0;
     Setpoint_bl = 0;
     Setpoint_br = 0;
-    }
+    
+  }
+
 }
 
 ros::Subscriber<geometry_msgs::Twist> sub("cmd_vel", &onTwist);
@@ -170,6 +170,31 @@ void fix_encoder_ori_on_start(){
   
 }
 
+//void reset Integral error when we stop
+void reset_pid_Ki()
+{
+  myPID_fl.SetMode(MANUAL);
+  myPID_fr.SetMode(MANUAL);
+  myPID_bl.SetMode(MANUAL);
+  myPID_br.SetMode(MANUAL);
+  Output_fl=0;
+  Output_fr=0;
+  Output_bl=0;
+  Output_br=0;
+  //myPID_fl.SetTunings(aggKp, 0, aggKd);
+  //myPID_fr.SetTunings(aggKp, 0, aggKd);
+  //myPID_bl.SetTunings(aggKp, 0, aggKd);
+  //myPID_br.SetTunings(aggKp, 0, aggKd);
+  myPID_fl.SetMode(AUTOMATIC);
+  myPID_fr.SetMode(AUTOMATIC);
+  myPID_bl.SetMode(AUTOMATIC);
+  myPID_br.SetMode(AUTOMATIC);
+  //myPID_fl.SetTunings(aggKp, aggKi, aggKd);
+  //myPID_fr.SetTunings(aggKp, aggKi, aggKd);
+  //myPID_bl.SetTunings(aggKp, aggKi, aggKd);
+  //myPID_br.SetTunings(aggKp, aggKi, aggKd);
+}
+
 // stop movement
 
 void stop()
@@ -206,10 +231,10 @@ void setup() {
   myPID_bl.SetMode(AUTOMATIC);
   myPID_br.SetMode(AUTOMATIC);
 
-  myPID_fl.SetSampleTime(25);
-  myPID_fr.SetSampleTime(25);
-  myPID_bl.SetSampleTime(25);
-  myPID_br.SetSampleTime(25);
+  myPID_fl.SetSampleTime(20);
+  myPID_fr.SetSampleTime(20);
+  myPID_bl.SetSampleTime(20);
+  myPID_br.SetSampleTime(20);
 
   // Encoder setup
   
@@ -243,7 +268,7 @@ int old_ct1=0;
 int old_ct2=0;
 int old_ct3=0;
 int old_ct4=0;
-float ticks_per_meter = 33000.0;
+float ticks_per_meter = 33000.1;
 
 void loop() {
   
@@ -270,41 +295,32 @@ void loop() {
  // calculate time and current velocity
   
   unsigned long now = millis();
-  //unsigned long Elapsed_Time = (now - prev) / 1000.0;
-  Input_fl = ((float(ct1 - old_ct1))/ 33000.1) / ((now - prev) / 1000.0);
-  Input_fr = ((float(ct2 - old_ct2))/ 33000.1) /((now - prev) / 1000.0);
-  Input_bl = ((float(ct3 - old_ct3))/ 33000.1) /((now - prev) / 1000.0);
-  Input_br = ((float(ct4 - old_ct4))/ 33000.1) /((now - prev) / 1000.0);
+  Input_fl = (float(ct1 - old_ct1) / ticks_per_meter) / ((now - prev) / 1000.0);
+  Input_fr = (float(ct2 - old_ct2) / ticks_per_meter) / ((now - prev) / 1000.0);
+  Input_bl = (float(ct3 - old_ct3) / ticks_per_meter) / ((now - prev) / 1000.0);
+  Input_br = (float(ct4 - old_ct4) / ticks_per_meter) / ((now - prev) / 1000.0);
  
   // Use aggresive pid paramaters if gap > 0.1 else conservative
-  bool gap1 = abs(Setpoint_fl - Input_fl) < 0.1;
-  bool gap2 = abs(Setpoint_fr - Input_fr) < 0.1;
-  bool gap3 = abs(Setpoint_bl - Input_bl) < 0.1;
-  bool gap4 = abs(Setpoint_br - Input_br) < 0.1;
+  bool gap1 = abs(Setpoint_fl - Input_fl) < 0.12;
+  bool gap2 = abs(Setpoint_fr - Input_fr) < 0.12;
+  bool gap3 = abs(Setpoint_bl - Input_bl) < 0.12;
+  bool gap4 = abs(Setpoint_br - Input_br) < 0.12;
   
-  if(gap1){
+  if(gap1 && gap2 && gap3 && gap4){
     myPID_fl.SetTunings(consKp, consKi, consKd);
+    myPID_fr.SetTunings(consKp, consKi, consKd);
+    myPID_bl.SetTunings(consKp, consKi, consKd);
+    myPID_br.SetTunings(consKp, consKi, consKd);
+
   }
   else{
     myPID_fl.SetTunings(aggKp, aggKi, aggKd);
-  }
-  if(gap2){
-    myPID_fr.SetTunings(consKp, consKi, consKd);
-  }
-  else{
     myPID_fr.SetTunings(aggKp, aggKi, aggKd);
-  }
-  if(gap3){
-    myPID_bl.SetTunings(consKp, consKi, consKd);
-  }
-  else{
     myPID_bl.SetTunings(aggKp, aggKi, aggKd);
-  }
-  if(gap4){
-    myPID_br.SetTunings(consKp, consKi, consKd);
-  }
-  else{
     myPID_br.SetTunings(aggKp, aggKi, aggKd);
+  }
+  if(wtf){
+   reset_pid_Ki(); 
   }
   // Compute  Pid
   myPID_fl.Compute();
@@ -313,13 +329,7 @@ void loop() {
   myPID_br.Compute();
 
 
-  // HELP
-  if(wtf){
-    Output_fl=0;
-    Output_fr=0;
-    Output_bl=0;
-    Output_br=0;
-    }
+
 
   // Move the motors with the output of the pid
   
@@ -338,6 +348,6 @@ void loop() {
   old_ct4 = encoder_bright.count();
   prev = now;
   
-  delay(40);
+  delay(25);
 
 }
